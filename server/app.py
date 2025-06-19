@@ -1,3 +1,5 @@
+# server/app.py
+
 from flask import Flask, request, make_response, jsonify
 from flask_cors import CORS
 from flask_migrate import Migrate
@@ -14,46 +16,99 @@ migrate = Migrate(app, db)
 db.init_app(app)
 
 @app.route('/')
-def index():
-    return '<h1>Chatterbox API</h1>'
+def home():
+    return '<h1>Flask Message API</h1>'
 
-# GET all messages
-@app.route('/messages', methods=['GET'])
+@app.route('/messages', methods=['GET', 'POST'])
 def messages():
-    messages = Message.query.order_by(Message.created_at.asc()).all()
-    return jsonify([m.to_dict() for m in messages]), 200
+    if request.method == 'GET':
+        messages = Message.query.order_by(Message.created_at.asc()).all()
+        return make_response(jsonify([msg.to_dict() for msg in messages]), 200)
 
-# POST a new message
-@app.route('/messages', methods=['POST'])
-def create_message():
-    data = request.get_json()
-    try:
-        new_msg = Message(username=data['username'], body=data['body'])
-        db.session.add(new_msg)
+    elif request.method == 'POST':
+        data = request.get_json()
+        new_message = Message(
+            body=data.get('body'),
+            username=data.get('username')
+        )
+        db.session.add(new_message)
         db.session.commit()
-        return jsonify(new_msg.to_dict()), 201
-    except Exception as e:
-        return {"error": str(e)}, 400
+        return make_response(jsonify(new_message.to_dict()), 201)
 
-# PATCH a message
-@app.route('/messages/<int:id>', methods=['PATCH'])
-def update_message(id):
+@app.route('/messages/<int:id>', methods=['PATCH', 'DELETE'])
+def messages_by_id(id):
     message = Message.query.get_or_404(id)
-    data = request.get_json()
 
-    if 'body' in data:
-        message.body = data['body']
+    if request.method == 'PATCH':
+        data = request.get_json()
+        message.body = data.get('body', message.body)
         db.session.commit()
-        return jsonify(message.to_dict()), 200
-    return {"error": "No body provided"}, 400
+        return make_response(jsonify(message.to_dict()), 200)
 
-# DELETE a message
-@app.route('/messages/<int:id>', methods=['DELETE'])
-def delete_message(id):
-    message = Message.query.get_or_404(id)
-    db.session.delete(message)
-    db.session.commit()
-    return {"message": "Message deleted"}, 200
+    elif request.method == 'DELETE':
+        db.session.delete(message)
+        db.session.commit()
+        return make_response(jsonify({"message": "Message deleted successfully."}), 200)
 
 if __name__ == '__main__':
-    app.run(port=5555, debug=True)
+    app.run(port=5555)
+
+
+# server/models.py
+
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import MetaData
+from sqlalchemy_serializer import SerializerMixin
+
+metadata = MetaData(naming_convention={
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+})
+
+db = SQLAlchemy(metadata=metadata)
+
+class Message(db.Model, SerializerMixin):
+    __tablename__ = 'messages'
+
+    id = db.Column(db.Integer, primary_key=True)
+    body = db.Column(db.String, nullable=False)
+    username = db.Column(db.String, nullable=False)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+    updated_at = db.Column(db.DateTime, onupdate=db.func.now())
+
+    def __repr__(self):
+        return f"<Message {self.id} by {self.username}>"
+
+
+# server/seed.py
+
+#!/usr/bin/env python3
+
+from random import choice as rc
+from faker import Faker
+
+from app import app
+from models import db, Message
+
+fake = Faker()
+
+usernames = [fake.first_name() for _ in range(4)]
+if "Duane" not in usernames:
+    usernames.append("Duane")
+
+def make_messages():
+    Message.query.delete()
+
+    messages = []
+    for _ in range(20):
+        message = Message(
+            body=fake.sentence(),
+            username=rc(usernames),
+        )
+        messages.append(message)
+
+    db.session.add_all(messages)
+    db.session.commit()
+
+if __name__ == '__main__':
+    with app.app_context():
+        make_messages()
